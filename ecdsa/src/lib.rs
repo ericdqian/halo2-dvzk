@@ -1,4 +1,5 @@
 pub mod ecdsa;
+pub mod keygen;
 
 pub(crate) use ecc::halo2;
 pub(crate) use ecc::integer;
