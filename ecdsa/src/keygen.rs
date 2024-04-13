@@ -1,12 +1,14 @@
 use super::integer::IntegerChip;
 use crate::halo2;
-use crate::integer;
+use ecc::halo2::circuit::Layouter;
+use ecc::halo2::circuit::Value;
+use ecc::integer::IntegerInstructions;
+use ecc::integer::Range;
 use ecc::maingate::RegionCtx;
-use ecc::{AssignedPoint, GeneralEccChip};
+use ecc::GeneralEccChip;
 use halo2::arithmetic::CurveAffine;
 use halo2::halo2curves::ff::PrimeField;
 use halo2::plonk::Error;
-use integer::AssignedInteger;
 
 pub struct KeyGenChip<
     E: CurveAffine,
@@ -38,14 +40,46 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
 {
     pub fn gen_public_key(
         &self,
-        ctx: &mut RegionCtx<'_, N>,
-        private_key: &AssignedInteger<E::Scalar, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>,
-        generator_point: &AssignedPoint<E::Base, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>,
+        aux_generator: Value<E>,
+        private_key: Value<<E as CurveAffine>::ScalarExt>,
+        generator_point: Value<E>,
         window_size: usize,
-    ) -> Result<AssignedPoint<E::Base, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>, Error> {
-        let ecc_chip = self.ecc_chip();
-        let public_key = ecc_chip.mul(ctx, &generator_point, private_key, window_size);
-        public_key
+        layouter: &mut impl Layouter<N>,
+    ) -> Result<(), Error> {
+        let mut ecc_chip = self.ecc_chip();
+
+        layouter.assign_region(
+            || "assign aux values",
+            |region| {
+                let offset = 0;
+                let ctx = &mut RegionCtx::new(region, offset);
+
+                ecc_chip.assign_aux_generator(ctx, aux_generator)?;
+                ecc_chip.assign_aux(ctx, window_size, 1)?;
+                Ok(())
+            },
+        )?;
+
+        let scalar_chip = ecc_chip.scalar_field_chip();
+
+        let pkey = layouter.assign_region(
+            || "region 0",
+            |region| {
+                let offset = 0;
+                let ctx = &mut RegionCtx::new(region, offset);
+
+                let private_key = ecc_chip.new_unassigned_scalar(private_key);
+                let private_key = scalar_chip.assign_integer(ctx, private_key, Range::Remainder)?;
+
+                let generator_in_circuit = ecc_chip.assign_point(ctx, generator_point)?;
+                let public_key =
+                    ecc_chip.mul(ctx, &generator_in_circuit, &private_key, window_size)?;
+                ecc_chip.normalize(ctx, &public_key)
+            },
+        )?;
+
+        ecc_chip.expose_public(layouter.namespace(|| "public_key"), pkey, 0)?;
+        Ok(())
     }
 }
 
@@ -53,12 +87,9 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
 mod tests {
     use super::KeyGenChip;
     use crate::halo2;
-    use crate::integer;
     use crate::maingate;
     use ecc::integer::rns::Rns;
-    use ecc::integer::Range;
     use ecc::integer::NUMBER_OF_LOOKUP_LIMBS;
-    use ecc::maingate::RegionCtx;
     use ecc::Point;
     use ecc::{EccConfig, GeneralEccChip};
     use halo2::arithmetic::CurveAffine;
@@ -68,7 +99,6 @@ mod tests {
         group::{Curve, Group},
     };
     use halo2::plonk::{Circuit, ConstraintSystem, Error};
-    use integer::IntegerInstructions;
     use maingate::mock_prover_verify;
     use maingate::{MainGate, MainGateConfig, RangeChip, RangeConfig, RangeInstructions};
     use rand_core::OsRng;
@@ -169,47 +199,19 @@ mod tests {
             config: Self::Config,
             mut layouter: impl Layouter<N>,
         ) -> Result<(), Error> {
-            let mut ecc_chip = GeneralEccChip::<E, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>::new(
+            let ecc_chip = GeneralEccChip::<E, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>::new(
                 config.ecc_chip_config(),
             );
 
-            layouter.assign_region(
-                || "assign aux values",
-                |region| {
-                    let offset = 0;
-                    let ctx = &mut RegionCtx::new(region, offset);
-
-                    ecc_chip.assign_aux_generator(ctx, self.aux_generator)?;
-                    ecc_chip.assign_aux(ctx, self.window_size, 1)?;
-                    Ok(())
-                },
-            )?;
-
             let key_gen_chip = KeyGenChip::new(ecc_chip.clone());
-            let scalar_chip = ecc_chip.scalar_field_chip();
 
-            let pkey = layouter.assign_region(
-                || "region 0",
-                |region| {
-                    let offset = 0;
-                    let ctx = &mut RegionCtx::new(region, offset);
-
-                    let private_key = ecc_chip.new_unassigned_scalar(self.private_key);
-                    let private_key =
-                        scalar_chip.assign_integer(ctx, private_key, Range::Remainder)?;
-
-                    let generator_in_circuit = ecc_chip.assign_point(ctx, self.generator_point)?;
-                    let pkey = key_gen_chip.gen_public_key(
-                        ctx,
-                        &private_key,
-                        &generator_in_circuit,
-                        self.window_size,
-                    )?;
-                    ecc_chip.normalize(ctx, &pkey)
-                },
-            )?;
-
-            ecc_chip.expose_public(layouter.namespace(|| "public_key"), pkey, 0)?;
+            let _ = key_gen_chip.gen_public_key(
+                self.aux_generator,
+                self.private_key,
+                self.generator_point,
+                self.window_size,
+                &mut layouter,
+            );
 
             config.config_range(&mut layouter)?;
 
