@@ -2,6 +2,8 @@ use super::integer::{IntegerChip, IntegerConfig};
 use crate::halo2;
 use crate::integer;
 use crate::maingate;
+use ecc::halo2::circuit::Layouter;
+use ecc::integer::Range;
 use ecc::maingate::RegionCtx;
 use ecc::{AssignedPoint, EccConfig, GeneralEccChip};
 use halo2::arithmetic::CurveAffine;
@@ -94,44 +96,87 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
 {
     pub fn verify(
         &self,
-        ctx: &mut RegionCtx<'_, N>,
-        sig: &AssignedEcdsaSig<E::Scalar, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>,
-        pk: &AssignedPublicKey<E::Base, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>,
-        msg_hash: &AssignedInteger<E::Scalar, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>,
+        public_key: Value<E>,
+        signature: Value<(E::Scalar, E::Scalar)>,
+        msg_hash: Value<E::Scalar>,
+
+        aux_generator: E,
+        window_size: usize,
+        layouter: &mut impl Layouter<N>,
     ) -> Result<(), Error> {
-        let ecc_chip = self.ecc_chip();
+        let mut ecc_chip = self.ecc_chip();
+
+        layouter.assign_region(
+            || "assign aux values",
+            |region| {
+                let offset = 0;
+                let ctx = &mut RegionCtx::new(region, offset);
+
+                ecc_chip.assign_aux_generator(ctx, Value::known(aux_generator))?;
+                ecc_chip.assign_aux(ctx, window_size, 2)?;
+                Ok(())
+            },
+        )?;
+
         let scalar_chip = ecc_chip.scalar_field_chip();
         let base_chip = ecc_chip.base_field_chip();
 
-        // 1. check 0 < r, s < n
+        layouter.assign_region(
+            || "region 0",
+            |region| {
+                let offset = 0;
+                let ctx = &mut RegionCtx::new(region, offset);
 
-        // since `assert_not_zero` already includes a in-field check, we can just
-        // call `assert_not_zero`
-        scalar_chip.assert_not_zero(ctx, &sig.r)?;
-        scalar_chip.assert_not_zero(ctx, &sig.s)?;
+                let r = signature.map(|signature| signature.0);
+                let s = signature.map(|signature| signature.1);
+                let integer_r = ecc_chip.new_unassigned_scalar(r);
+                let integer_s = ecc_chip.new_unassigned_scalar(s);
+                let msg_hash = ecc_chip.new_unassigned_scalar(msg_hash);
 
-        // 2. w = s^(-1) (mod n)
-        let (s_inv, _) = scalar_chip.invert(ctx, &sig.s)?;
+                let r_assigned = scalar_chip.assign_integer(ctx, integer_r, Range::Remainder)?;
+                let s_assigned = scalar_chip.assign_integer(ctx, integer_s, Range::Remainder)?;
+                let sig = AssignedEcdsaSig {
+                    r: r_assigned,
+                    s: s_assigned,
+                };
 
-        // 3. u1 = m' * w (mod n)
-        let u1 = scalar_chip.mul(ctx, msg_hash, &s_inv)?;
+                let pk_in_circuit = ecc_chip.assign_point(ctx, public_key)?;
+                let pk_assigned = AssignedPublicKey {
+                    point: pk_in_circuit,
+                };
+                let msg_hash = scalar_chip.assign_integer(ctx, msg_hash, Range::Remainder)?;
+                // 1. check 0 < r, s < n
 
-        // 4. u2 = r * w (mod n)
-        let u2 = scalar_chip.mul(ctx, &sig.r, &s_inv)?;
+                // since `assert_not_zero` already includes a in-field check, we can just
+                // call `assert_not_zero`
+                scalar_chip.assert_not_zero(ctx, &sig.r)?;
+                scalar_chip.assert_not_zero(ctx, &sig.s)?;
 
-        // 5. compute Q = u1*G + u2*pk
-        let e_gen = ecc_chip.assign_point(ctx, Value::known(E::generator()))?;
-        let pairs = vec![(e_gen, u1), (pk.point.clone(), u2)];
-        let q = ecc_chip.mul_batch_1d_horizontal(ctx, pairs, 4)?;
+                // 2. w = s^(-1) (mod n)
+                let (s_inv, _) = scalar_chip.invert(ctx, &sig.s)?;
 
-        // 6. reduce q_x in E::ScalarExt
-        // assuming E::Base/E::ScalarExt have the same number of limbs
-        let q_x = q.x();
-        let q_x_reduced_in_q = base_chip.reduce(ctx, q_x)?;
-        let q_x_reduced_in_r = scalar_chip.reduce_external(ctx, &q_x_reduced_in_q)?;
+                // 3. u1 = m' * w (mod n)
+                let u1 = scalar_chip.mul(ctx, &msg_hash, &s_inv)?;
 
-        // 7. check if Q.x == r (mod n)
-        scalar_chip.assert_strict_equal(ctx, &q_x_reduced_in_r, &sig.r)?;
+                // 4. u2 = r * w (mod n)
+                let u2 = scalar_chip.mul(ctx, &sig.r, &s_inv)?;
+
+                // 5. compute Q = u1*G + u2*pk
+                let e_gen = ecc_chip.assign_point(ctx, Value::known(E::generator()))?;
+                let pairs = vec![(e_gen, u1), (pk_assigned.point.clone(), u2)];
+                let q = ecc_chip.mul_batch_1d_horizontal(ctx, pairs, 4)?;
+
+                // 6. reduce q_x in E::ScalarExt
+                // assuming E::Base/E::ScalarExt have the same number of limbs
+                let q_x = q.x();
+                let q_x_reduced_in_q = base_chip.reduce(ctx, q_x)?;
+                let q_x_reduced_in_r = scalar_chip.reduce_external(ctx, &q_x_reduced_in_q)?;
+
+                // 7. check if Q.x == r (mod n)
+                scalar_chip.assert_strict_equal(ctx, &q_x_reduced_in_r, &sig.r)?;
+                Ok(())
+            },
+        )?;
 
         Ok(())
     }
@@ -139,14 +184,11 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
 
 #[cfg(test)]
 mod tests {
-    use super::{AssignedEcdsaSig, AssignedPublicKey, EcdsaChip};
+    use super::EcdsaChip;
     use crate::halo2;
-    use crate::integer;
     use crate::maingate;
-    use ecc::integer::Range;
     use ecc::maingate::big_to_fe;
     use ecc::maingate::fe_to_big;
-    use ecc::maingate::RegionCtx;
     use ecc::{EccConfig, GeneralEccChip};
     use halo2::arithmetic::CurveAffine;
     use halo2::circuit::{Layouter, SimpleFloorPlanner, Value};
@@ -155,7 +197,6 @@ mod tests {
         group::{Curve, Group},
     };
     use halo2::plonk::{Circuit, ConstraintSystem, Error};
-    use integer::IntegerInstructions;
     use maingate::mock_prover_verify;
     use maingate::{MainGate, MainGateConfig, RangeChip, RangeConfig, RangeInstructions};
     use rand_core::OsRng;
@@ -237,54 +278,18 @@ mod tests {
             config: Self::Config,
             mut layouter: impl Layouter<N>,
         ) -> Result<(), Error> {
-            let mut ecc_chip = GeneralEccChip::<E, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>::new(
+            let ecc_chip = GeneralEccChip::<E, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>::new(
                 config.ecc_chip_config(),
             );
-
-            layouter.assign_region(
-                || "assign aux values",
-                |region| {
-                    let offset = 0;
-                    let ctx = &mut RegionCtx::new(region, offset);
-
-                    ecc_chip.assign_aux_generator(ctx, Value::known(self.aux_generator))?;
-                    ecc_chip.assign_aux(ctx, self.window_size, 2)?;
-                    Ok(())
-                },
-            )?;
-
             let ecdsa_chip = EcdsaChip::new(ecc_chip.clone());
-            let scalar_chip = ecc_chip.scalar_field_chip();
-
-            layouter.assign_region(
-                || "region 0",
-                |region| {
-                    let offset = 0;
-                    let ctx = &mut RegionCtx::new(region, offset);
-
-                    let r = self.signature.map(|signature| signature.0);
-                    let s = self.signature.map(|signature| signature.1);
-                    let integer_r = ecc_chip.new_unassigned_scalar(r);
-                    let integer_s = ecc_chip.new_unassigned_scalar(s);
-                    let msg_hash = ecc_chip.new_unassigned_scalar(self.msg_hash);
-
-                    let r_assigned =
-                        scalar_chip.assign_integer(ctx, integer_r, Range::Remainder)?;
-                    let s_assigned =
-                        scalar_chip.assign_integer(ctx, integer_s, Range::Remainder)?;
-                    let sig = AssignedEcdsaSig {
-                        r: r_assigned,
-                        s: s_assigned,
-                    };
-
-                    let pk_in_circuit = ecc_chip.assign_point(ctx, self.public_key)?;
-                    let pk_assigned = AssignedPublicKey {
-                        point: pk_in_circuit,
-                    };
-                    let msg_hash = scalar_chip.assign_integer(ctx, msg_hash, Range::Remainder)?;
-                    ecdsa_chip.verify(ctx, &sig, &pk_assigned, &msg_hash)
-                },
-            )?;
+            let _ = ecdsa_chip.verify(
+                self.public_key,
+                self.signature,
+                self.msg_hash,
+                self.aux_generator,
+                self.window_size,
+                &mut layouter,
+            );
 
             config.config_range(&mut layouter)?;
 
