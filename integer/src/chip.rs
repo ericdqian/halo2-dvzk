@@ -5,7 +5,7 @@ use crate::instructions::{IntegerInstructions, Range};
 use crate::rns::{Common, Integer, Rns};
 use halo2::halo2curves::ff::PrimeField;
 use halo2::plonk::Error;
-use maingate::halo2::circuit::Value;
+use maingate::halo2::circuit::{Layouter, Value};
 use maingate::{
     halo2, AssignedCondition, AssignedValue, CombinationOptionCommon, MainGateInstructions,
     RangeInstructions, RegionCtx, Term,
@@ -77,6 +77,23 @@ impl<W: PrimeField, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_L
         native_value: AssignedValue<N>,
     ) -> AssignedInteger<W, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB> {
         AssignedInteger::new(Rc::clone(&self.rns), limbs, native_value)
+    }
+
+    /// Exposes public integer value
+    pub fn expose_public(
+        &self,
+        mut layouter: impl Layouter<N>,
+        value: AssignedInteger<W, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>,
+        offset: usize,
+    ) -> Result<(), Error> {
+        let main_gate = self.main_gate();
+
+        let mut offset = offset;
+        for limb in value.limbs().iter() {
+            main_gate.expose_public(layouter.namespace(|| "value"), limb.into(), offset)?;
+            offset += 1;
+        }
+        Ok(())
     }
 }
 
