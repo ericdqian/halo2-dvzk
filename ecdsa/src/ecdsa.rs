@@ -121,7 +121,7 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
         let scalar_chip = ecc_chip.scalar_field_chip();
         let base_chip = ecc_chip.base_field_chip();
 
-        layouter.assign_region(
+        let (pk, h, r, s) = layouter.assign_region(
             || "region 0",
             |region| {
                 let offset = 0;
@@ -174,9 +174,15 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
 
                 // 7. check if Q.x == r (mod n)
                 scalar_chip.assert_strict_equal(ctx, &q_x_reduced_in_r, &sig.r)?;
-                Ok(())
+                let pk_norm = ecc_chip.normalize(ctx, &pk_assigned.point)?;
+                Ok((pk_norm, msg_hash, sig.r, sig.s))
             },
         )?;
+
+        ecc_chip.expose_public(layouter.namespace(|| "public_key"), pk, 0)?;
+        scalar_chip.expose_public(layouter.namespace(|| "hash"), h, NUMBER_OF_LIMBS * 2)?;
+        scalar_chip.expose_public(layouter.namespace(|| "r"), r, NUMBER_OF_LIMBS * 3)?;
+        scalar_chip.expose_public(layouter.namespace(|| "s"), s, NUMBER_OF_LIMBS * 4)?;
 
         Ok(())
     }
@@ -187,8 +193,12 @@ mod tests {
     use super::EcdsaChip;
     use crate::halo2;
     use crate::maingate;
+    use ecc::integer::rns::Integer;
+    use ecc::integer::rns::Rns;
+    use ecc::integer::NUMBER_OF_LOOKUP_LIMBS;
     use ecc::maingate::big_to_fe;
     use ecc::maingate::fe_to_big;
+    use ecc::Point;
     use ecc::{EccConfig, GeneralEccChip};
     use halo2::arithmetic::CurveAffine;
     use halo2::circuit::{Layouter, SimpleFloorPlanner, Value};
@@ -201,6 +211,7 @@ mod tests {
     use maingate::{MainGate, MainGateConfig, RangeChip, RangeConfig, RangeInstructions};
     use rand_core::OsRng;
     use std::marker::PhantomData;
+    use std::rc::Rc;
 
     const BIT_LEN_LIMB: usize = 68;
     const NUMBER_OF_LIMBS: usize = 4;
@@ -209,6 +220,27 @@ mod tests {
     struct TestCircuitEcdsaVerifyConfig {
         main_gate_config: MainGateConfig,
         range_config: RangeConfig,
+    }
+    #[allow(clippy::type_complexity)]
+    fn setup<
+        C: CurveAffine,
+        N: PrimeField,
+        const NUMBER_OF_LIMBS: usize,
+        const BIT_LEN_LIMB: usize,
+    >(
+        k_override: u32,
+    ) -> (
+        Rns<C::Base, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>,
+        Rns<C::Scalar, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>,
+        u32,
+    ) {
+        let (rns_base, rns_scalar) = GeneralEccChip::<C, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>::rns();
+        let bit_len_lookup = BIT_LEN_LIMB / NUMBER_OF_LOOKUP_LIMBS;
+        let mut k: u32 = (bit_len_lookup + 1) as u32;
+        if k_override != 0 {
+            k = k_override;
+        }
+        (rns_base, rns_scalar, k)
     }
 
     impl TestCircuitEcdsaVerifyConfig {
@@ -350,7 +382,25 @@ mod tests {
                 window_size: 4,
                 ..Default::default()
             };
-            let instance = vec![vec![]];
+
+            let (rns_base, rns_scalar, _) = setup::<C, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>(0);
+            let rns_base = Rc::new(rns_base);
+            let rns_scalar = Rc::new(rns_scalar);
+
+            let public_key = Point::new(Rc::clone(&rns_base), public_key);
+            let mut public_data = public_key.public();
+
+            let msg_hash = Integer::from_fe(msg_hash, Rc::clone(&rns_scalar));
+            public_data.extend(msg_hash.limbs());
+
+            let r = Integer::from_fe(r, Rc::clone(&rns_scalar));
+            public_data.extend(r.limbs());
+
+            let s = Integer::from_fe(s, Rc::clone(&rns_scalar));
+            public_data.extend(s.limbs());
+
+            // Order is: pkey, msg_hash, r, s
+            let instance = vec![public_data];
             mock_prover_verify(&circuit, instance);
         }
 
