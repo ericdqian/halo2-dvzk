@@ -163,6 +163,15 @@ pub trait MainGateInstructions<F: PrimeField, const WIDTH: usize>: Chip<F> {
         row: usize,
     ) -> Result<(), Error>;
 
+    /// assigns a value from a public input
+    fn assign_from_instance(
+        &self,
+        ctx: &mut RegionCtx<'_, F>,
+        row: usize,
+        column: MainGateColumn,
+        offset: usize,
+    ) -> Result<AssignedValue<F>, Error>;
+
     /// Constrain a witness to be equal to a fixed value. This should allow us
     /// to move a fixed value around
     fn assign_constant(

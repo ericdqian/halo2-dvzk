@@ -144,6 +144,32 @@ impl<F: PrimeField> MainGateInstructions<F, WIDTH> for MainGate<F> {
         layouter.constrain_instance(value.cell(), config.instance, row)
     }
 
+    fn assign_from_instance(
+        &self,
+        ctx: &mut RegionCtx<'_, F>,
+        row: usize,
+        column: MainGateColumn,
+        offset: usize,
+    ) -> Result<AssignedValue<F>, Error> {
+        let config = self.config();
+        let column = match column {
+            MainGateColumn::A => self.config.a,
+            MainGateColumn::B => self.config.b,
+            MainGateColumn::C => self.config.c,
+            MainGateColumn::D => self.config.d,
+            MainGateColumn::E => self.config.e,
+        };
+        let cell = ctx.assign_from_instance(
+            || "assigned instance value",
+            config.instance,
+            row,
+            column,
+            offset,
+        )?;
+        self.no_operation(ctx)?;
+        Ok(cell)
+    }
+
     fn assign_to_column(
         &self,
         ctx: &mut RegionCtx<'_, F>,
