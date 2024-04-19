@@ -121,14 +121,12 @@ impl<W: PrimeField, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_L
         offset: usize,
     ) -> Result<AssignedInteger<W, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>, Error> {
         let main_gate = self.main_gate();
-        let column = MainGateColumn::first();
 
         let mut offset = offset;
         let mut decomposed = Vec::new();
         for limb in value.limbs().iter() {
             println!("{}", offset);
-            let is_equal =
-                main_gate.is_advice_equal_to_instance(ctx, limb.into(), offset, column)?;
+            let is_equal = main_gate.is_advice_equal_to_instance(ctx, limb.into(), offset)?;
             offset += 1;
             decomposed.push(is_equal);
         }
