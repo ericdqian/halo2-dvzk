@@ -43,6 +43,15 @@ pub trait IntegerInstructions<
         integer: W,
     ) -> Result<AssignedInteger<W, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>, Error>;
 
+    /// Assigns an [`Integer`] constant to a cell in the circuit returning an
+    /// [`AssignedInteger`].
+    fn is_advice_equal_to_instance(
+        &self,
+        ctx: &mut RegionCtx<'_, N>,
+        advice: &AssignedInteger<W, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>,
+        row: usize,
+    ) -> Result<AssignedInteger<W, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>, Error>;
+
     /// Decomposes an [`AssignedInteger`] into its bit representation.
     fn decompose(
         &self,

@@ -33,14 +33,13 @@ impl<'a, F: Field> RegionCtx<'a, F> {
         instance: Column<Instance>,
         row: usize,
         advice: Column<Advice>,
-        offset: usize,
     ) -> Result<AssignedCell<F, F>, Error>
     where
         A: Fn() -> AR,
         AR: Into<String>,
     {
         self.region
-            .assign_advice_from_instance(annotation, instance, row, advice, offset)
+            .assign_advice_from_instance(annotation, instance, row, advice, self.offset)
     }
 
     pub fn assign_fixed<A, AR>(

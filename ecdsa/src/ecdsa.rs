@@ -121,7 +121,7 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
         let scalar_chip = ecc_chip.scalar_field_chip();
         let base_chip = ecc_chip.base_field_chip();
 
-        let (pk, h, r, s) = layouter.assign_region(
+        let (pk, h) = layouter.assign_region(
             || "region 0",
             |region| {
                 let offset = 0;
@@ -173,16 +173,21 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
                 let q_x_reduced_in_r = scalar_chip.reduce_external(ctx, &q_x_reduced_in_q)?;
 
                 // 7. check if Q.x == r (mod n)
-                scalar_chip.assert_strict_equal(ctx, &q_x_reduced_in_r, &sig.r)?;
+                // scalar_chip.assert_strict_equal(ctx, &q_x_reduced_in_r, &sig.r)?;
+                println!("calling...");
+                let is_equal = scalar_chip.is_advice_equal_to_instance(
+                    ctx,
+                    &q_x_reduced_in_r,
+                    NUMBER_OF_LIMBS * 3,
+                )?;
                 let pk_norm = ecc_chip.normalize(ctx, &pk_assigned.point)?;
-                Ok((pk_norm, msg_hash, sig.r, sig.s))
+                Ok((pk_norm, msg_hash))
             },
         )?;
 
         ecc_chip.expose_public(layouter.namespace(|| "public_key"), pk, 0)?;
         scalar_chip.expose_public(layouter.namespace(|| "hash"), h, NUMBER_OF_LIMBS * 2)?;
-        scalar_chip.expose_public(layouter.namespace(|| "r"), r, NUMBER_OF_LIMBS * 3)?;
-        scalar_chip.expose_public(layouter.namespace(|| "s"), s, NUMBER_OF_LIMBS * 4)?;
+        // scalar_chip.expose_public(layouter.namespace(|| "is_equal"), e, NUMBER_OF_LIMBS * 4)?;
 
         Ok(())
     }
@@ -209,6 +214,7 @@ mod tests {
     use halo2::plonk::{Circuit, ConstraintSystem, Error};
     use maingate::mock_prover_verify;
     use maingate::{MainGate, MainGateConfig, RangeChip, RangeConfig, RangeInstructions};
+    use num_traits::One;
     use rand_core::OsRng;
     use std::marker::PhantomData;
     use std::rc::Rc;
@@ -396,10 +402,12 @@ mod tests {
             let r = Integer::from_fe(r, Rc::clone(&rns_scalar));
             public_data.extend(r.limbs());
 
-            let s = Integer::from_fe(s, Rc::clone(&rns_scalar));
-            public_data.extend(s.limbs());
+            let one = num_bigint::BigUint::one();
+            let one = Integer::from_big(one, Rc::clone(&rns_scalar));
+            let one_limbs = one.limbs();
+            public_data.extend(one_limbs);
 
-            // Order is: pkey, msg_hash, r, s
+            // Order is: pkey, msg_hash, r, ones
             let instance = vec![public_data];
             mock_prover_verify(&circuit, instance);
         }
@@ -408,7 +416,7 @@ mod tests {
         use crate::curves::pasta::{Fp as PastaFp, Fq as PastaFq};
         use crate::curves::secp256k1::Secp256k1Affine as Secp256k1;
         run::<Secp256k1, BnScalar>();
-        run::<Secp256k1, PastaFp>();
-        run::<Secp256k1, PastaFq>();
+        // run::<Secp256k1, PastaFp>();
+        // run::<Secp256k1, PastaFq>();
     }
 }

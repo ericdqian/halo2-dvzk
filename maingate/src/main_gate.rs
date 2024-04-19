@@ -144,30 +144,29 @@ impl<F: PrimeField> MainGateInstructions<F, WIDTH> for MainGate<F> {
         layouter.constrain_instance(value.cell(), config.instance, row)
     }
 
-    fn assign_from_instance(
+    fn is_advice_equal_to_instance(
         &self,
         ctx: &mut RegionCtx<'_, F>,
-        row: usize,
-        column: MainGateColumn,
+        assigned_value: AssignedValue<F>,
         offset: usize,
     ) -> Result<AssignedValue<F>, Error> {
-        let config = self.config();
-        let column = match column {
+        let column = MainGateColumn::first();
+        let advice_column = match column {
             MainGateColumn::A => self.config.a,
             MainGateColumn::B => self.config.b,
             MainGateColumn::C => self.config.c,
             MainGateColumn::D => self.config.d,
             MainGateColumn::E => self.config.e,
         };
-        let cell = ctx.assign_from_instance(
-            || "assigned instance value",
+        let config = self.config();
+        let value = ctx.assign_from_instance(
+            || "instance to advice",
             config.instance,
-            row,
-            column,
             offset,
+            advice_column,
         )?;
-        self.no_operation(ctx)?;
-        Ok(cell)
+
+        self.is_equal(ctx, &assigned_value, &value)
     }
 
     fn assign_to_column(

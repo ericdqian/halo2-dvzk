@@ -163,12 +163,11 @@ pub trait MainGateInstructions<F: PrimeField, const WIDTH: usize>: Chip<F> {
         row: usize,
     ) -> Result<(), Error>;
 
-    /// assigns a value from a public input
-    fn assign_from_instance(
+    /// Checks if an advice cell is equal to an instance cell; returns a cell with 1 if so and 0 if not
+    fn is_advice_equal_to_instance(
         &self,
         ctx: &mut RegionCtx<'_, F>,
-        row: usize,
-        column: MainGateColumn,
+        value: AssignedValue<F>,
         offset: usize,
     ) -> Result<AssignedValue<F>, Error>;
 

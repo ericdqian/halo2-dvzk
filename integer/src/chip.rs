@@ -7,11 +7,13 @@ use halo2::halo2curves::ff::PrimeField;
 use halo2::plonk::Error;
 use maingate::halo2::circuit::{Layouter, Value};
 use maingate::{
-    halo2, AssignedCondition, AssignedValue, CombinationOptionCommon, MainGateInstructions,
-    RangeInstructions, RegionCtx, Term,
+    fe_to_big, halo2, AssignedCondition, AssignedValue, CombinationOptionCommon,
+    MainGateInstructions, RangeInstructions, RegionCtx, Term,
 };
 use maingate::{MainGate, MainGateConfig};
 use maingate::{RangeChip, RangeConfig};
+use num_bigint::BigUint;
+use num_traits::One;
 
 mod add;
 mod assert_in_field;
@@ -109,6 +111,38 @@ impl<W: PrimeField, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_L
     ) -> Result<AssignedInteger<W, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>, Error> {
         let to_be_reduced = self.new_assigned_integer(a.limbs(), a.native().clone());
         self.reduce(ctx, &to_be_reduced)
+    }
+
+    /// Assigns value from public integer value
+    fn is_advice_equal_to_instance(
+        &self,
+        ctx: &mut RegionCtx<'_, N>,
+        value: &AssignedInteger<W, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>,
+        offset: usize,
+    ) -> Result<AssignedInteger<W, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>, Error> {
+        let main_gate = self.main_gate();
+        let column = MainGateColumn::first();
+
+        let mut offset = offset;
+        let mut decomposed = Vec::new();
+        for limb in value.limbs().iter() {
+            println!("{}", offset);
+            let is_equal =
+                main_gate.is_advice_equal_to_instance(ctx, limb.into(), offset, column)?;
+            offset += 1;
+            decomposed.push(is_equal);
+        }
+
+        let mut as_limbs = Vec::new();
+        for val in decomposed {
+            as_limbs.push(AssignedLimb::from(val, BigUint::one()))
+        }
+        let integer = Integer::from_big(BigUint::one(), Rc::clone(&self.rns));
+        let native = main_gate.assign_constant(ctx, integer.native())?;
+
+        let assigned_integer =
+            AssignedInteger::new(Rc::clone(&self.rns), &as_limbs.try_into().unwrap(), native);
+        Ok(assigned_integer)
     }
 
     fn assign_integer(
