@@ -121,7 +121,7 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
         let scalar_chip = ecc_chip.scalar_field_chip();
         let base_chip = ecc_chip.base_field_chip();
 
-        let (pk, h) = layouter.assign_region(
+        let (pk, h, e) = layouter.assign_region(
             || "region 0",
             |region| {
                 let offset = 0;
@@ -181,13 +181,13 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
                     NUMBER_OF_LIMBS * 3,
                 )?;
                 let pk_norm = ecc_chip.normalize(ctx, &pk_assigned.point)?;
-                Ok((pk_norm, msg_hash))
+                Ok((pk_norm, msg_hash, is_equal))
             },
         )?;
 
         ecc_chip.expose_public(layouter.namespace(|| "public_key"), pk, 0)?;
         scalar_chip.expose_public(layouter.namespace(|| "hash"), h, NUMBER_OF_LIMBS * 2)?;
-        // scalar_chip.expose_public(layouter.namespace(|| "is_equal"), e, NUMBER_OF_LIMBS * 4)?;
+        scalar_chip.expose_public(layouter.namespace(|| "is_equal"), e, NUMBER_OF_LIMBS * 3)?;
 
         Ok(())
     }
@@ -404,7 +404,11 @@ mod tests {
 
             let one = num_bigint::BigUint::one();
             let one = Integer::from_big(one, Rc::clone(&rns_scalar));
+            // let one = Integer::from_limbs(vec![1, 1, 1, 1], Rc::clone(&rns_scalar));
             let one_limbs = one.limbs();
+            for limb in &one_limbs {
+                println!("limb: {:?}", limb);
+            }
             public_data.extend(one_limbs);
 
             // Order is: pkey, msg_hash, r, ones
@@ -413,7 +417,7 @@ mod tests {
         }
 
         use crate::curves::bn256::Fr as BnScalar;
-        use crate::curves::pasta::{Fp as PastaFp, Fq as PastaFq};
+        // use crate::curves::pasta::{Fp as PastaFp, Fq as PastaFq};
         use crate::curves::secp256k1::Secp256k1Affine as Secp256k1;
         run::<Secp256k1, BnScalar>();
         // run::<Secp256k1, PastaFp>();

@@ -5,7 +5,8 @@ use crate::instructions::{IntegerInstructions, Range};
 use crate::rns::{Common, Integer, Rns};
 use halo2::halo2curves::ff::PrimeField;
 use halo2::plonk::Error;
-use maingate::halo2::circuit::{Layouter, Value};
+use maingate::halo2::arithmetic::CurveAffine;
+use maingate::halo2::circuit::{AssignedCell, Layouter, Value};
 use maingate::{
     fe_to_big, halo2, AssignedCondition, AssignedValue, CombinationOptionCommon,
     MainGateInstructions, RangeInstructions, RegionCtx, Term,
@@ -13,7 +14,7 @@ use maingate::{
 use maingate::{MainGate, MainGateConfig};
 use maingate::{RangeChip, RangeConfig};
 use num_bigint::BigUint;
-use num_traits::One;
+use num_traits::{zero, One};
 
 mod add;
 mod assert_in_field;
@@ -123,23 +124,42 @@ impl<W: PrimeField, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_L
         let main_gate = self.main_gate();
 
         let mut offset = offset;
-        let mut decomposed = Vec::new();
+        let mut count = 0;
+        let mut running_are_all_equal: AssignedValue<N>;
         for limb in value.limbs().iter() {
-            println!("{}", offset);
-            let is_equal = main_gate.is_advice_equal_to_instance(ctx, limb.into(), offset)?;
+            let is_equal =
+                main_gate.is_advice_equal_to_instance_public(ctx, limb.into(), offset)?;
             offset += 1;
-            decomposed.push(is_equal);
+
+            if (count > 0) {
+                running_are_all_equal =
+                    main_gate.is_equal(ctx, &is_equal, &running_are_all_equal)?;
+            } else {
+                running_are_all_equal = is_equal;
+            }
+
+            count += 1;
         }
 
-        let mut as_limbs = Vec::new();
-        for val in decomposed {
-            as_limbs.push(AssignedLimb::from(val, BigUint::one()))
-        }
-        let integer = Integer::from_big(BigUint::one(), Rc::clone(&self.rns));
-        let native = main_gate.assign_constant(ctx, integer.native())?;
+        let val = running_are_all_equal;
 
-        let assigned_integer =
-            AssignedInteger::new(Rc::clone(&self.rns), &as_limbs.try_into().unwrap(), native);
+        let zero = W::ZERO;
+
+        let assigned_zero = self.assign_constant(ctx, zero)?;
+
+        let mut zero_limbs = assigned_zero.limbs_public();
+
+        let limb1 = AssignedLimb::from(val.clone(), BigUint::one());
+
+        zero_limbs[0] = limb1;
+        // let limb2 = zero_limbs[0];
+        // let limb3 = zero_limbs[1];
+        // let limb4 = zero_limbs[2];
+        // let limbs: [AssignedLimb<N>; NUMBER_OF_LIMBS] = [limb1, limb2, limb3, limb4];
+        // let integer = AssignedInteger::from_constructed_limbs(limbs, Rc::clone(&self.rns));
+        // let native = main_gate.assign_constant(ctx, integer.native())?;
+
+        let assigned_integer = AssignedInteger::new(Rc::clone(&self.rns), &zero_limbs, val);
         Ok(assigned_integer)
     }
 

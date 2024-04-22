@@ -164,10 +164,21 @@ pub trait MainGateInstructions<F: PrimeField, const WIDTH: usize>: Chip<F> {
     ) -> Result<(), Error>;
 
     /// Checks if an advice cell is equal to an instance cell; returns a cell with 1 if so and 0 if not
-    fn is_advice_equal_to_instance(
+    fn is_advice_equal_to_instance_public(
         &self,
         ctx: &mut RegionCtx<'_, F>,
         value: AssignedValue<F>,
+        offset: usize,
+    ) -> Result<AssignedValue<F>, Error> {
+        self.is_advice_equal_to_instance_private(ctx, value, MainGateColumn::first(), offset)
+    }
+
+    /// Checks if an advice cell is equal to an instance cell; returns a cell with 1 if so and 0 if not
+    fn is_advice_equal_to_instance_private(
+        &self,
+        ctx: &mut RegionCtx<'_, F>,
+        value: AssignedValue<F>,
+        column: MainGateColumn,
         offset: usize,
     ) -> Result<AssignedValue<F>, Error>;
 

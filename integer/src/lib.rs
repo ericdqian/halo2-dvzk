@@ -163,6 +163,11 @@ impl<W: PrimeField, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_L
         &self.limbs
     }
 
+    /// Returns assigned limbs
+    pub fn limbs_public(&self) -> [AssignedLimb<N>; NUMBER_OF_LIMBS] {
+        self.limbs
+    }
+
     /// Returns value under native modulus
     pub fn native(&self) -> &AssignedValue<N> {
         &self.native_value
