@@ -174,7 +174,6 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
 
                 // 7. check if Q.x == r (mod n)
                 // scalar_chip.assert_strict_equal(ctx, &q_x_reduced_in_r, &sig.r)?;
-                println!("calling...");
                 let is_equal = scalar_chip.is_advice_equal_to_instance(
                     ctx,
                     &q_x_reduced_in_r,
@@ -187,7 +186,7 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
 
         ecc_chip.expose_public(layouter.namespace(|| "public_key"), pk, 0)?;
         scalar_chip.expose_public(layouter.namespace(|| "hash"), h, NUMBER_OF_LIMBS * 2)?;
-        scalar_chip.expose_public(layouter.namespace(|| "is_equal"), e, NUMBER_OF_LIMBS * 3)?;
+        scalar_chip.expose_public(layouter.namespace(|| "is_equal"), e, NUMBER_OF_LIMBS * 4)?;
 
         Ok(())
     }
@@ -215,6 +214,7 @@ mod tests {
     use maingate::mock_prover_verify;
     use maingate::{MainGate, MainGateConfig, RangeChip, RangeConfig, RangeInstructions};
     use num_traits::One;
+    use num_traits::Zero;
     use rand_core::OsRng;
     use std::marker::PhantomData;
     use std::rc::Rc;
@@ -404,23 +404,19 @@ mod tests {
 
             let one = num_bigint::BigUint::one();
             let one = Integer::from_big(one, Rc::clone(&rns_scalar));
-            // let one = Integer::from_limbs(vec![1, 1, 1, 1], Rc::clone(&rns_scalar));
             let one_limbs = one.limbs();
-            for limb in &one_limbs {
-                println!("limb: {:?}", limb);
-            }
             public_data.extend(one_limbs);
 
-            // Order is: pkey, msg_hash, r, ones
+            // Order is: pkey, msg_hash, r, one
             let instance = vec![public_data];
             mock_prover_verify(&circuit, instance);
         }
 
         use crate::curves::bn256::Fr as BnScalar;
-        // use crate::curves::pasta::{Fp as PastaFp, Fq as PastaFq};
+        use crate::curves::pasta::{Fp as PastaFp, Fq as PastaFq};
         use crate::curves::secp256k1::Secp256k1Affine as Secp256k1;
         run::<Secp256k1, BnScalar>();
-        // run::<Secp256k1, PastaFp>();
-        // run::<Secp256k1, PastaFq>();
+        run::<Secp256k1, PastaFp>();
+        run::<Secp256k1, PastaFq>();
     }
 }

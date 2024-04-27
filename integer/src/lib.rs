@@ -35,7 +35,7 @@ pub const NUMBER_OF_LOOKUP_LIMBS: usize = 4;
 #[derive(Debug, Clone)]
 pub struct AssignedLimb<F: PrimeField> {
     // Witness value
-    value: AssignedValue<F>,
+    pub(crate) value: AssignedValue<F>,
     // Maximum value to track overflow and reduction flow
     max_val: big_uint,
 }
@@ -164,7 +164,7 @@ impl<W: PrimeField, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_L
     }
 
     /// Returns assigned limbs
-    pub fn limbs_public(&self) -> [AssignedLimb<N>; NUMBER_OF_LIMBS] {
+    pub fn limbs_public(self) -> [AssignedLimb<N>; NUMBER_OF_LIMBS] {
         self.limbs
     }
 
