@@ -144,6 +144,31 @@ impl<F: PrimeField> MainGateInstructions<F, WIDTH> for MainGate<F> {
         layouter.constrain_instance(value.cell(), config.instance, row)
     }
 
+    fn is_advice_equal_to_instance_private(
+        &self,
+        ctx: &mut RegionCtx<'_, F>,
+        assigned_value: AssignedValue<F>,
+        column: MainGateColumn,
+        offset: usize,
+    ) -> Result<AssignedValue<F>, Error> {
+        let advice_column = match column {
+            MainGateColumn::A => self.config.a,
+            MainGateColumn::B => self.config.b,
+            MainGateColumn::C => self.config.c,
+            MainGateColumn::D => self.config.d,
+            MainGateColumn::E => self.config.e,
+        };
+        let config = self.config();
+        let value = ctx.assign_from_instance(
+            || "instance to advice",
+            config.instance,
+            offset,
+            advice_column,
+        )?;
+        self.no_operation(ctx)?;
+        self.is_equal(ctx, &assigned_value, &value)
+    }
+
     fn assign_to_column(
         &self,
         ctx: &mut RegionCtx<'_, F>,

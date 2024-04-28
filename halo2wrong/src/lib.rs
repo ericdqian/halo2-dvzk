@@ -1,7 +1,7 @@
 use halo2::{
     arithmetic::Field,
     circuit::{AssignedCell, Cell, Region, Value},
-    plonk::{Advice, Column, Error, Fixed, Selector},
+    plonk::{Advice, Column, Error, Fixed, Instance, Selector},
 };
 
 pub mod utils;
@@ -25,6 +25,21 @@ impl<'a, F: Field> RegionCtx<'a, F> {
 
     pub fn into_region(self) -> Region<'a, F> {
         self.region
+    }
+
+    pub fn assign_from_instance<A, AR>(
+        &mut self,
+        annotation: A,
+        instance: Column<Instance>,
+        row: usize,
+        advice: Column<Advice>,
+    ) -> Result<AssignedCell<F, F>, Error>
+    where
+        A: Fn() -> AR,
+        AR: Into<String>,
+    {
+        self.region
+            .assign_advice_from_instance(annotation, instance, row, advice, self.offset)
     }
 
     pub fn assign_fixed<A, AR>(

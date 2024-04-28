@@ -43,6 +43,14 @@ pub trait IntegerInstructions<
         integer: W,
     ) -> Result<AssignedInteger<W, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>, Error>;
 
+    /// Returns a [`AssignedInteger`] whose value is 1 if the advice [`Integer`] is equal to the public instance [`Integer`] and 0 otherwise
+    fn is_advice_equal_to_instance(
+        &self,
+        ctx: &mut RegionCtx<'_, N>,
+        advice: &AssignedInteger<W, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>,
+        row: usize,
+    ) -> Result<AssignedInteger<W, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>, Error>;
+
     /// Decomposes an [`AssignedInteger`] into its bit representation.
     fn decompose(
         &self,

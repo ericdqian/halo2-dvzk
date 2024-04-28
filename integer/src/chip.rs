@@ -5,13 +5,16 @@ use crate::instructions::{IntegerInstructions, Range};
 use crate::rns::{Common, Integer, Rns};
 use halo2::halo2curves::ff::PrimeField;
 use halo2::plonk::Error;
-use maingate::halo2::circuit::{Layouter, Value};
+use maingate::halo2::arithmetic::CurveAffine;
+use maingate::halo2::circuit::{AssignedCell, Layouter, Value};
 use maingate::{
-    halo2, AssignedCondition, AssignedValue, CombinationOptionCommon, MainGateInstructions,
-    RangeInstructions, RegionCtx, Term,
+    fe_to_big, halo2, AssignedCondition, AssignedValue, CombinationOptionCommon,
+    MainGateInstructions, RangeInstructions, RegionCtx, Term,
 };
 use maingate::{MainGate, MainGateConfig};
 use maingate::{RangeChip, RangeConfig};
+use num_bigint::BigUint;
+use num_traits::{zero, One};
 
 mod add;
 mod assert_in_field;
@@ -109,6 +112,48 @@ impl<W: PrimeField, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_L
     ) -> Result<AssignedInteger<W, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>, Error> {
         let to_be_reduced = self.new_assigned_integer(a.limbs(), a.native().clone());
         self.reduce(ctx, &to_be_reduced)
+    }
+
+    /// Assigns value from public integer value
+    fn is_advice_equal_to_instance(
+        &self,
+        ctx: &mut RegionCtx<'_, N>,
+        value: &AssignedInteger<W, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>,
+        offset: usize,
+    ) -> Result<AssignedInteger<W, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>, Error> {
+        let main_gate = self.main_gate();
+
+        let mut offset = offset;
+
+        let mut running_is_equal = vec![];
+        for limb in value.limbs().iter() {
+            let is_equal =
+                main_gate.is_advice_equal_to_instance_public(ctx, limb.into(), offset)?;
+            offset += 1;
+
+            running_is_equal.push(is_equal);
+        }
+
+        let mut are_all_equal: AssignedValue<N> =
+            main_gate.and(ctx, &running_is_equal[0], &running_is_equal[1])?;
+
+        for i in 2..(NUMBER_OF_LIMBS - 1) {
+            are_all_equal = main_gate.and(ctx, &running_is_equal[i], &running_is_equal[i + 1])?
+        }
+
+        let mut limbs: Vec<AssignedLimb<N>> = Vec::with_capacity(NUMBER_OF_LIMBS);
+
+        for _ in 0..NUMBER_OF_LIMBS {
+            let assigned_zero = main_gate.assign_constant(ctx, N::ZERO)?;
+            let zero_limb = AssignedLimb::from(assigned_zero.clone(), BigUint::one());
+            limbs.push(zero_limb);
+        }
+
+        let is_advice_equal_limbs = AssignedLimb::from(are_all_equal.clone(), BigUint::one());
+        limbs[0] = is_advice_equal_limbs;
+
+        let assigned_integer = self.new_assigned_integer(&limbs.try_into().unwrap(), are_all_equal);
+        Ok(assigned_integer)
     }
 
     fn assign_integer(
