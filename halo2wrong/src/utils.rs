@@ -68,13 +68,13 @@ pub fn mock_prover_verify<F: FromUniformBytes<64> + Ord, C: Circuit<F>>(
     circuit: &C,
     instance: Vec<Vec<F>>,
 ) {
-    // println!("movk_prover_verify");
-    // let dimension = DimensionMeasurement::measure(circuit).unwrap();
-    // println!("prover gen");
-    // println!("K: {:?}", dimension.k());
-    let prover = MockProver::run(18, circuit, instance).unwrap_or_else(|err| panic!("{:#?}", err));
-    println!("verifyiing");
-    assert_eq!(prover.verify(), Ok(()))
+    let dimension = DimensionMeasurement::measure(circuit).unwrap();
+    let prover = MockProver::run(dimension.k(), circuit, instance)
+        .unwrap_or_else(|err| panic!("{:#?}", err));
+    assert_eq!(
+        prover.verify_at_rows(dimension.advice_range(), dimension.advice_range()),
+        Ok(())
+    )
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
