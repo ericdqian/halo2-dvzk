@@ -79,10 +79,8 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
                 let public_key = ecc_chip.normalize(ctx, &public_key)?;
 
                 let is_equal_x = base_chip.is_advice_equal_to_instance(ctx, public_key.x(), 0)?;
-                println!("{:?}", is_equal_x);
                 let is_equal_y =
                     base_chip.is_advice_equal_to_instance(ctx, public_key.y(), NUMBER_OF_LIMBS)?;
-                println!("{:?}", is_equal_y);
                 let is_equal = base_chip.mul(ctx, &is_equal_x, &is_equal_y)?;
 
                 Ok(is_equal)
