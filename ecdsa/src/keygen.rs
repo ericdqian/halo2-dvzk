@@ -61,8 +61,9 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
         )?;
 
         let scalar_chip = ecc_chip.scalar_field_chip();
+        let base_chip = ecc_chip.base_field_chip();
 
-        let pkey = layouter.assign_region(
+        let is_equal = layouter.assign_region(
             || "region 0",
             |region| {
                 let offset = 0;
@@ -74,11 +75,26 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
                 let generator_in_circuit = ecc_chip.assign_point(ctx, generator_point)?;
                 let public_key =
                     ecc_chip.mul(ctx, &generator_in_circuit, &private_key, window_size)?;
-                ecc_chip.normalize(ctx, &public_key)
+
+                let public_key = ecc_chip.normalize(ctx, &public_key)?;
+
+                let is_equal_x = base_chip.is_advice_equal_to_instance(ctx, public_key.x(), 0)?;
+                println!("{:?}", is_equal_x);
+                let is_equal_y =
+                    base_chip.is_advice_equal_to_instance(ctx, public_key.y(), NUMBER_OF_LIMBS)?;
+                println!("{:?}", is_equal_y);
+                let is_equal = base_chip.mul(ctx, &is_equal_x, &is_equal_y)?;
+
+                Ok(is_equal)
             },
         )?;
 
-        ecc_chip.expose_public(layouter.namespace(|| "public_key"), pkey, 0)?;
+        base_chip.expose_public(
+            layouter.namespace(|| "is_equal"),
+            is_equal,
+            NUMBER_OF_LIMBS * 2,
+        )?;
+
         Ok(())
     }
 }
@@ -88,6 +104,7 @@ mod tests {
     use super::KeyGenChip;
     use crate::halo2;
     use crate::maingate;
+    use ecc::integer::rns::Integer;
     use ecc::integer::rns::Rns;
     use ecc::integer::NUMBER_OF_LOOKUP_LIMBS;
     use ecc::Point;
@@ -101,6 +118,7 @@ mod tests {
     use halo2::plonk::{Circuit, ConstraintSystem, Error};
     use maingate::mock_prover_verify;
     use maingate::{MainGate, MainGateConfig, RangeChip, RangeConfig, RangeInstructions};
+    use num_traits::One;
     use rand_core::OsRng;
     use std::marker::PhantomData;
     use std::rc::Rc;
@@ -233,13 +251,20 @@ mod tests {
                 window_size: 4,
                 ..Default::default()
             };
-            let (rns_base, _, _) = setup::<C, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>(0);
+            let (rns_base, rns_scalar, _) = setup::<C, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>(0);
             let rns_base = Rc::new(rns_base);
+            let rns_scalar = Rc::new(rns_scalar);
             let public_key = (generator_point * private_key).to_affine();
             let public_key = Point::new(Rc::clone(&rns_base), public_key);
-            let public_data = public_key.public();
-            println!("0: {:?}", public_data[0]);
-            println!("1: {:?}", public_data[1]);
+            let mut public_data = public_key.public();
+
+            let one = num_bigint::BigUint::one();
+            // We can use the scalar field since we're representing a 1
+            let one = Integer::from_big(one, Rc::clone(&rns_scalar));
+            let one_limbs = one.limbs();
+
+            public_data.extend(one_limbs);
+
             let instance = vec![public_data];
             mock_prover_verify(&circuit, instance);
         }
