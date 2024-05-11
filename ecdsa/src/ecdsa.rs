@@ -94,6 +94,18 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
 impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_LIMB: usize>
     EcdsaChip<E, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>
 {
+    pub fn check(
+        &self,
+        layouter: &mut impl Layouter<N>,
+        value: AssignedInteger<<E as CurveAffine>::ScalarExt, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>,
+        offset: usize,
+    ) {
+        let _ = self.ecc_chip().scalar_field_chip().expose_public(
+            layouter.namespace(|| "is_equal"),
+            value,
+            NUMBER_OF_LIMBS * offset,
+        );
+    }
     pub fn verify(
         &self,
         public_key: Value<E>,
@@ -103,7 +115,11 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
         aux_generator: E,
         window_size: usize,
         layouter: &mut impl Layouter<N>,
-    ) -> Result<(), Error> {
+        input_offset: usize,
+    ) -> Result<
+        AssignedInteger<<E as CurveAffine>::ScalarExt, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>,
+        Error,
+    > {
         let mut ecc_chip = self.ecc_chip();
 
         layouter.assign_region(
@@ -122,7 +138,7 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
         let base_chip = ecc_chip.base_field_chip();
 
         let (pk, h, e) = layouter.assign_region(
-            || "region 0",
+            || "ecdsa region 0",
             |region| {
                 let offset = 0;
                 let ctx = &mut RegionCtx::new(region, offset);
@@ -177,18 +193,25 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
                 let is_equal = scalar_chip.is_advice_equal_to_instance(
                     ctx,
                     &q_x_reduced_in_r,
-                    NUMBER_OF_LIMBS * 3,
+                    NUMBER_OF_LIMBS * (input_offset + 3),
                 )?;
                 let pk_norm = ecc_chip.normalize(ctx, &pk_assigned.point)?;
                 Ok((pk_norm, msg_hash, is_equal))
             },
         )?;
 
-        ecc_chip.expose_public(layouter.namespace(|| "public_key"), pk, 0)?;
-        scalar_chip.expose_public(layouter.namespace(|| "hash"), h, NUMBER_OF_LIMBS * 2)?;
-        scalar_chip.expose_public(layouter.namespace(|| "is_equal"), e, NUMBER_OF_LIMBS * 4)?;
+        ecc_chip.expose_public(
+            layouter.namespace(|| "public_key"),
+            pk,
+            (input_offset + 0) * NUMBER_OF_LIMBS,
+        )?;
+        scalar_chip.expose_public(
+            layouter.namespace(|| "hash"),
+            h,
+            NUMBER_OF_LIMBS * (input_offset + 2),
+        )?;
 
-        Ok(())
+        Ok(e)
     }
 }
 
@@ -320,14 +343,16 @@ mod tests {
                 config.ecc_chip_config(),
             );
             let ecdsa_chip = EcdsaChip::new(ecc_chip.clone());
-            let _ = ecdsa_chip.verify(
+            let e = ecdsa_chip.verify(
                 self.public_key,
                 self.signature,
                 self.msg_hash,
                 self.aux_generator,
                 self.window_size,
                 &mut layouter,
-            );
+                0,
+            )?;
+            ecdsa_chip.check(&mut layouter, e, 4);
 
             config.config_range(&mut layouter)?;
 

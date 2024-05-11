@@ -1,3 +1,4 @@
+pub mod designated_verifier;
 pub mod ecdsa;
 pub mod keygen;
 

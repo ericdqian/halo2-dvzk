@@ -2,6 +2,7 @@ use super::integer::IntegerChip;
 use crate::halo2;
 use ecc::halo2::circuit::Layouter;
 use ecc::halo2::circuit::Value;
+use ecc::integer::AssignedInteger;
 use ecc::integer::IntegerInstructions;
 use ecc::integer::Range;
 use ecc::maingate::RegionCtx;
@@ -38,14 +39,28 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
 impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_LIMB: usize>
     KeyGenChip<E, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>
 {
+    pub fn check(
+        &self,
+        layouter: &mut impl Layouter<N>,
+        value: AssignedInteger<<E as CurveAffine>::Base, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>,
+        offset: usize,
+    ) {
+        let _ = self.ecc_chip().base_field_chip().expose_public(
+            layouter.namespace(|| "is_equal"),
+            value,
+            NUMBER_OF_LIMBS * offset,
+        );
+    }
     pub fn gen_public_key(
         &self,
-        aux_generator: Value<E>,
+        aux_generator: E,
         private_key: Value<<E as CurveAffine>::ScalarExt>,
         generator_point: Value<E>,
         window_size: usize,
         layouter: &mut impl Layouter<N>,
-    ) -> Result<(), Error> {
+        input_offset: usize,
+    ) -> Result<AssignedInteger<<E as CurveAffine>::Base, N, NUMBER_OF_LIMBS, BIT_LEN_LIMB>, Error>
+    {
         let mut ecc_chip = self.ecc_chip();
 
         layouter.assign_region(
@@ -54,7 +69,7 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
                 let offset = 0;
                 let ctx = &mut RegionCtx::new(region, offset);
 
-                ecc_chip.assign_aux_generator(ctx, aux_generator)?;
+                ecc_chip.assign_aux_generator(ctx, Value::known(aux_generator))?;
                 ecc_chip.assign_aux(ctx, window_size, 1)?;
                 Ok(())
             },
@@ -64,7 +79,7 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
         let base_chip = ecc_chip.base_field_chip();
 
         let is_equal = layouter.assign_region(
-            || "region 0",
+            || "keygen region 0",
             |region| {
                 let offset = 0;
                 let ctx = &mut RegionCtx::new(region, offset);
@@ -78,7 +93,11 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
 
                 let public_key = ecc_chip.normalize(ctx, &public_key)?;
 
-                let is_equal_x = base_chip.is_advice_equal_to_instance(ctx, public_key.x(), 0)?;
+                let is_equal_x = base_chip.is_advice_equal_to_instance(
+                    ctx,
+                    public_key.x(),
+                    input_offset * NUMBER_OF_LIMBS,
+                )?;
                 let is_equal_y =
                     base_chip.is_advice_equal_to_instance(ctx, public_key.y(), NUMBER_OF_LIMBS)?;
                 let is_equal = base_chip.mul(ctx, &is_equal_x, &is_equal_y)?;
@@ -87,13 +106,13 @@ impl<E: CurveAffine, N: PrimeField, const NUMBER_OF_LIMBS: usize, const BIT_LEN_
             },
         )?;
 
-        base_chip.expose_public(
-            layouter.namespace(|| "is_equal"),
-            is_equal,
-            NUMBER_OF_LIMBS * 2,
-        )?;
+        // base_chip.expose_public(
+        //     layouter.namespace(|| "is_equal"),
+        //     is_equal,
+        //     NUMBER_OF_LIMBS * 2,
+        // )?;
 
-        Ok(())
+        Ok(is_equal)
     }
 }
 
@@ -190,7 +209,7 @@ mod tests {
 
     #[derive(Default, Clone)]
     struct KeyGenCircuit<E: CurveAffine, N: PrimeField> {
-        aux_generator: Value<E>,
+        aux_generator: E,
         generator_point: Value<E>,
         private_key: Value<<E as CurveAffine>::ScalarExt>,
         window_size: usize,
@@ -221,13 +240,16 @@ mod tests {
 
             let key_gen_chip = KeyGenChip::new(ecc_chip.clone());
 
-            let _ = key_gen_chip.gen_public_key(
+            let e = key_gen_chip.gen_public_key(
                 self.aux_generator,
                 self.private_key,
                 self.generator_point,
                 self.window_size,
                 &mut layouter,
-            );
+                0,
+            )?;
+
+            key_gen_chip.check(&mut layouter, e, 2);
 
             config.config_range(&mut layouter)?;
 
@@ -245,7 +267,7 @@ mod tests {
             let circuit = KeyGenCircuit::<C, N> {
                 private_key: Value::known(private_key),
                 generator_point: Value::known(generator_point),
-                aux_generator: Value::known(aux_generator),
+                aux_generator,
                 window_size: 4,
                 ..Default::default()
             };
